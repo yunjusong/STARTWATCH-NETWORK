@@ -1,0 +1,102 @@
+
+library(network)
+library(sna)
+library(ergm)
+library(statnet)
+library(ggplot2)
+
+
+STARTWATCHnetwork <- read.paj("STARTWATCHgraph.net")
+
+mat <- as.matrix.network(STARTWATCHnetwork,matrix.type="adjacency")
+
+write.csv(mat, "STARTWATCHmatrix.csv")
+
+edges <- as.matrix(read.table("STARTWATCHmatrix.csv", sep=",", stringsAsFactors = F, header=T, row.names=1, quote="\""))
+
+atts <-read.table("STARTWATCHnodes0324.csv", sep=",", header=T, quote="\"", stringsAsFactors=F, strip.white=T, as.is=T)
+
+net <- network(edges, vertex.attr=atts, matrix.type = "adjacency", vertex.attrnames=colnames(atts), directed=T, hyper=F, loops=F, multiple=F, bipartite=F)
+summary.network(net, print.adj = FALSE)
+
+model0 <- ergm(net ~edges)
+summary(model0) 
+#model 0 is a null ergm
+#Monte Carlo MLE Results: 
+#Estimate Std. Error MCMC % z value Pr(>|z|)    
+#edges -5.25183    0.08442      0  -62.21   <1e-04 ***
+
+#null AIC/BIC: 1766  /  1774    (Smaller is better.)
+#AIC is better in situations when a false negative finding would be considered more misleading than a false positive, and BIC is better in situations where a false positive is as misleading as, or more misleading than, a false negative.
+plogis(coef(model0)[[1]]) #probability of the null ERGM is 0.0052
+
+model02 <- ergm(net ~edges + mutual)
+summary(model02)
+plogis(coef(model02)[['edges']]+coef(model02)[['mutual']]) #0.014 (there are no reciprocol ties in this tagging network, as expected the odds of reciprocal ties is actually less than the edge/density network)
+
+#visualizing the motherhood network, transposed young mothers and pregnant into "New Mom" in new category "motherhoodtp" due to insufficient variables for both categories.
+#assigned colours to childless as yellow, new moms as green, mothers as red, and the rest is grey. 
+plot(net, vertex.col=c("yellow","green","red","grey")[ifelse(network::get.vertex.attribute(net, "motherhoodtp")=="Childless", 1, ifelse(network::get.vertex.attribute(net, "motherhoodtp")=="New Mom", 2, ifelse(network::get.vertex.attribute(net, "motherhoodtp")=="Mother", 3, 4)))])
+#counting # of ties between participants with different motherhood status 
+mixingmatrix(net,"motherhoodtp")
+
+model1 <- ergm(net~edges + nodematch("motherhoodtp", diff=T))
+summary(model1)
+#Monte Carlo MLE results show that childless are more likely to respond to each other (0.608, p<0.05), new moms (pregnant and young mothers) are likely to tag each other (p>0.65). Not enough mothers in the sample to make an estimate.  
+plogis(coef(model1)[[1]]) #0.0088 
+plogis(coef(model1)[[1]]+coef(model1)[[2]]) #0.0012 #
+plogis(coef(model1)[[1]]+coef(model1)[[2]]+coef(model1)[[3]]) #0.0022 
+plogis(coef(model1)[[1]]+coef(model1)[[2]]+coef(model1)[[3]]+coef(model1)[[4]]) #0 
+# motherhoodtp AIC/BIX: 1728 / 1761    
+#original correlation coefficient was 0.015. Adding motherhood shows reduction in AIC/BIC, women  
+
+#evaluate model method 2: simulated vs. observed methods
+model0.sim <- simulate(model0, nsim=1)
+mixingmatrix(model0.sim, "motherhoodtp")
+#null model simulation 1 
+#From            Childless Mother New Mom Total
+# Statunknown  75        17*      2       5    99
+#  Childless  18*         2      1       0    21
+#  Mother      4         0      2       0     6
+#  New Mom     6         3      0       1    10
+#  Total     103        22      5       6   136
+model1.sim <- simulate(model1, nsim=1)
+mixingmatrix(model1.sim, "motherhoodtp")
+#From        Childless Mother New Mom Total
+#  Statunknown  15      34*     10       6    65
+#  Childless 32*        11      0       1    44
+#  Mother     8         3      0       0    11
+#  New Mom    6         2      0       0     8
+#  Total     61        50     10       7   128
+#conclusion, following simulation, we know childless tag childless more. There are too many missing variables but we observe that mothers tag more "status unknown" nodes, possibly those are mothers but mothers in general accepted less interviews so we are unable to determine whether people they've tagged are mothers/young mothers/childless.
+
+plot(model0.sim, vertex.col=c("yellow","green","red","grey")[1+(get.vertex.attribute(net, "motherhoodtp")=="Childless")])
+plot(model1.sim, vertex.col=c("yellow","green","red","grey")[1+(get.vertex.attribute(net, "motherhoodtp")=="Childless")])
+#simulation showed that the motherhoodtp model created more ties.                                                             
+
+#check goodness of fit of the motherhood model
+model1.gof <-gof(model1)
+plot(model1.gof)
+mcmc.diagnostics(model1) #MCMC is only run when at least one of the terms in the model represents dyad dependence (e.g., degree terms, or triad related terms
+# For models with only dyadic independent terms, estimation relies on traditional maximum likelihood algorithms for generalized linear models. 
+
+model2 <- ergm(net ~edges + nodematch("motherhoodtp",diff=T) + nodematch("edu", diff=T))
+summary(model2)
+#  Education AIC/BIC: 1689/ 1762. Education is not determinant of network connection
+model3 <- ergm(net ~edges + nodematch("motherhoodtp",diff=T) + nodematch("ses", diff=T))
+summary(model3)
+# SES AIC/BIC: 1688/1745. SES is not a significant determinant for network connection. 
+
+model4 <- ergm(net ~edges + nodematch("motherhoodtp",diff=T) + nodematch("state", diff=T))
+summary(model4)
+#being Punjabi is a determinant of tagging, odds of 1.8
+plogis(coef(model4)[[3]]) #Gujarati are 61.2% likely to connect with other Gujaratis. P=0.155
+plogis(coef(model4)[[5]]) #Punjabi are 57.2% likely to connect with other Punjabis. P<0.000
+
+model4a <-ergm(net~edges + nodematch("state", diff=T))
+summary(model4a)
+model5 <- ergm(net ~edges + nodematch("state", diff=T, keep=c(6))+ nodematch("religion", diff=T))
+summary(model5)
+model6 <- ergm(net~edges + nodecov("loc"))
+
+
