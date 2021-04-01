@@ -1,3 +1,1 @@
-# myrepo
-testing my setup 
-A line from GitBash
+Startwatch ergm
